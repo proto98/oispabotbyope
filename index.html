@@ -49,7 +49,7 @@ body {
   box-sizing: border-box;
 }
 
-/* TILE (IMPORTANT FIX) */
+/* TILE */
 .tile {
   width: 100%;
   aspect-ratio: 1 / 1;
@@ -198,9 +198,9 @@ function draw() {
       const tile = document.createElement("div");
       tile.className = "tile";
 
-      // FIXED LINE ONLY
+      // ✅ ONLY FIXED LINE (NO images/ folder)
       if (value !== 0) {
-        tile.style.backgroundImage = `url(images/${value}.jpg)`;
+        tile.style.backgroundImage = `url(${value}.jpg)`;
       } else {
         tile.style.backgroundImage = "";
       }

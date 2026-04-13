@@ -38,10 +38,7 @@ body {
   width: min(90vw, 320px);
   aspect-ratio: 1 / 1;
   margin: auto;
-
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
+  position: relative;
 
   background: #bbada0;
   padding: 10px;
@@ -49,31 +46,39 @@ body {
   box-sizing: border-box;
 }
 
-/* TILE */
-.tile {
-  width: 100%;
-  aspect-ratio: 1 / 1;
+/* ghost grid underneath for empty cell backgrounds */
+#grid-bg {
+  position: absolute;
+  inset: 10px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
 
+.cell-bg {
+  background: #cdc1b4;
   border-radius: 8px;
+}
 
+/* TILE — absolutely positioned, animated */
+.tile {
+  position: absolute;
+  border-radius: 8px;
   background-color: #cdc1b4;
   background-size: cover;
   background-position: center;
-
-  display: flex;
-  justify-content: center;
-  align-items: center;
+  transition: top 0.1s ease, left 0.1s ease;
 }
 
 /* animations */
-.spawn { animation: pop 0.15s ease; }
+.spawn { animation: pop 0.15s ease 0.1s both; }
 
 @keyframes pop {
   0% { transform: scale(0.2); }
   100% { transform: scale(1); }
 }
 
-.merge { animation: wobble 0.2s ease; }
+.merge { animation: wobble 0.2s ease 0.1s both; }
 
 @keyframes wobble {
   0% { transform: scale(1); }
@@ -95,11 +100,49 @@ body {
   justify-content: center;
   align-items: center;
   flex-direction: column;
+
+  animation: bgBlink 1.2s ease-in-out infinite;
+}
+
+@keyframes bgBlink {
+  0%, 100% { background: rgba(150,0,0,0.9); }
+  50%       { background: rgba(80,0,0,0.5); }
+}
+
+#overlay .message {
+  animation: textBlink 1.2s ease-in-out infinite;
+}
+
+@keyframes textBlink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.15; }
+}
+
+/* win overlay */
+#winOverlay {
+  display: none;
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+
+  background: white;
+  color: black;
+
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
 }
 
 .message {
   font-size: 60px;
   font-weight: bold;
+}
+
+#winOverlay .message {
+  font-size: 48px;
+  font-weight: bold;
+  color: black;
 }
 
 button {
@@ -120,11 +163,18 @@ button {
   GÅ TILL PRISMA
 </button>
 
-<div id="game"></div>
+<div id="game">
+  <div id="grid-bg"></div>
+</div>
 
 <div id="overlay">
   <div class="message">kvarsittning</div>
   <div id="finalScore"></div>
+  <button onclick="restart()">Restart</button>
+</div>
+
+<div id="winOverlay">
+  <div class="message">SKOLDAGEN ÄR SLUT!</div>
   <button onclick="restart()">Restart</button>
 </div>
 
@@ -135,40 +185,52 @@ let board = [];
 let score = 0;
 let highScore = localStorage.getItem("highScore") || 0;
 
-let spawn = null;
+let spawnPos = null;
 let merges = [];
+let hasWon = false;
+let inputLocked = false;
+
+// prevBoard[r][c] = {r, c} of where this tile came from before the move
+let prevPositions = null;
 
 function init() {
   board = Array(size).fill().map(() => Array(size).fill(0));
   score = 0;
+  hasWon = false;
+  prevPositions = null;
 
   document.getElementById("overlay").style.display = "none";
+  document.getElementById("winOverlay").style.display = "none";
+
+  // build static cell backgrounds
+  const bg = document.getElementById("grid-bg");
+  bg.innerHTML = "";
+  for (let i = 0; i < size * size; i++) {
+    const cell = document.createElement("div");
+    cell.className = "cell-bg";
+    bg.appendChild(cell);
+  }
 
   addTile();
   addTile();
-  draw();
+  draw(false);
 }
 
 function addTile() {
   let empty = [];
-
-  for (let r = 0; r < size; r++) {
-    for (let c = 0; c < size; c++) {
+  for (let r = 0; r < size; r++)
+    for (let c = 0; c < size; c++)
       if (board[r][c] === 0) empty.push({r, c});
-    }
-  }
 
   if (!empty.length) return;
 
   let {r, c} = empty[Math.floor(Math.random() * empty.length)];
   board[r][c] = Math.random() < 0.9 ? 2 : 4;
-
-  spawn = {r, c};
+  spawnPos = {r, c};
 }
 
 function updateRebirthButton() {
   const btn = document.getElementById("rebirthBtn");
-
   if (score >= 1000) {
     btn.disabled = false;
     btn.classList.add("enabled");
@@ -178,9 +240,42 @@ function updateRebirthButton() {
   }
 }
 
-function draw() {
+function checkWin() {
+  if (hasWon) return;
+  for (let r = 0; r < size; r++)
+    for (let c = 0; c < size; c++)
+      if (board[r][c] === 2048) {
+        hasWon = true;
+        setTimeout(() => {
+          document.getElementById("winOverlay").style.display = "flex";
+        }, 300);
+        return;
+      }
+}
+
+// Returns pixel {top, left, size} for a grid position inside #game
+function tileMetrics() {
   const game = document.getElementById("game");
-  game.innerHTML = "";
+  const inner = game.clientWidth - 20; // subtract padding*2
+  const gap = 10;
+  const tileSize = (inner - gap * (size - 1)) / size;
+  return { tileSize, gap };
+}
+
+function posToPixel(r, c) {
+  const { tileSize, gap } = tileMetrics();
+  return {
+    top:  10 + r * (tileSize + gap),
+    left: 10 + c * (tileSize + gap),
+    size: tileSize,
+  };
+}
+
+function draw(animate = true) {
+  const game = document.getElementById("game");
+
+  // remove old tiles (not the grid-bg)
+  game.querySelectorAll(".tile").forEach(t => t.remove());
 
   if (score > highScore) {
     highScore = score;
@@ -194,22 +289,46 @@ function draw() {
 
   board.forEach((row, r) => {
     row.forEach((value, c) => {
+      if (value === 0) return;
 
       const tile = document.createElement("div");
       tile.className = "tile";
 
-      // ✅ ONLY FIXED LINE (NO images/ folder)
-      if (value !== 0) {
-        tile.style.backgroundImage = `url(${value}.jpg)`;
+      const { top, left, size: sz } = posToPixel(r, c);
+      tile.style.width  = sz + "px";
+      tile.style.height = sz + "px";
+      tile.style.backgroundImage = `url(${value}.jpg)`;
+
+      if (animate && prevPositions) {
+        // find where this tile came from
+        const from = prevPositions[r][c];
+        if (from && (from.r !== r || from.c !== c)) {
+          const { top: ft, left: fl } = posToPixel(from.r, from.c);
+          // start at old position instantly, then CSS transition moves it
+          tile.style.top  = ft + "px";
+          tile.style.left = fl + "px";
+          // force reflow so transition fires
+          tile.getBoundingClientRect();
+        } else {
+          tile.style.top  = top + "px";
+          tile.style.left = left + "px";
+        }
       } else {
-        tile.style.backgroundImage = "";
+        tile.style.top  = top + "px";
+        tile.style.left = left + "px";
       }
 
-      if (spawn && spawn.r === r && spawn.c === c) {
+      // animate to final position
+      requestAnimationFrame(() => {
+        tile.style.top  = top + "px";
+        tile.style.left = left + "px";
+      });
+
+      if (spawnPos && spawnPos.r === r && spawnPos.c === c) {
         tile.classList.add("spawn");
       }
 
-      if (merges.includes(value)) {
+      if (merges.some(m => m.r === r && m.c === c)) {
         tile.classList.add("merge");
       }
 
@@ -217,79 +336,137 @@ function draw() {
     });
   });
 
-  spawn = null;
+  spawnPos = null;
   merges = [];
+  prevPositions = null;
 }
 
 function rebirth() {
   if (score < 1000) return;
-
   score -= 1000;
-
-  for (let r = 0; r < size; r++) {
-    for (let c = 0; c < size; c++) {
+  for (let r = 0; r < size; r++)
+    for (let c = 0; c < size; c++)
       if (board[r][c] < 32) board[r][c] = 0;
-    }
-  }
-
-  draw();
+  draw(false);
 }
 
+// Returns {row, mergeIndices} and also a mapping from new index → old index
 function slide(row) {
-  let arr = row.filter(v => v);
+  // Build mapping: newIndex → oldIndex (position in original row)
+  let arr = [];
+  for (let i = 0; i < row.length; i++)
+    if (row[i] !== 0) arr.push({ val: row[i], origIdx: i });
+
+  let mergeIndices = [];
 
   for (let i = 0; i < arr.length - 1; i++) {
-    if (arr[i] === arr[i + 1]) {
-      arr[i] *= 2;
-      score += arr[i];
-      merges.push(arr[i]);
-      arr[i + 1] = 0;
+    if (arr[i].val === arr[i + 1].val) {
+      arr[i].val *= 2;
+      score += arr[i].val;
+      arr[i + 1] = null;
+      mergeIndices.push(i);
+      i++; // skip merged tile
     }
   }
 
-  arr = arr.filter(v => v);
-  while (arr.length < size) arr.push(0);
-  return arr;
+  arr = arr.filter(v => v !== null);
+  while (arr.length < size) arr.push(null);
+
+  return {
+    row: arr.map(v => v ? v.val : 0),
+    origins: arr.map(v => v ? v.origIdx : null),
+    mergeIndices,
+  };
 }
 
-function moveLeft() {
-  board = board.map(r => slide(r));
-  return true;
+// Snapshot current board positions before a move
+function snapshotPositions() {
+  return board.map(row => row.map(v => v)); // just values; we track by position
 }
 
-function moveRight() {
-  board = board.map(r => slide([...r].reverse()).reverse());
-  return true;
-}
+// Build prevPositions map: for each (r,c) in newBoard, where did the tile come from?
+function buildPrevPositions(moveDir) {
+  // We re-run the slide logic to capture origins
+  const prev = Array(size).fill(null).map(() => Array(size).fill(null));
 
-function moveUp() {
-  for (let c = 0; c < size; c++) {
-    let col = board.map(r => r[c]);
-    let after = slide(col);
-    for (let r = 0; r < size; r++) board[r][c] = after[r];
+  if (moveDir === "left") {
+    for (let r = 0; r < size; r++) {
+      const { origins } = slide(board[r]); // board is already updated, need old
+      // we'll pass old row
+    }
   }
-  return true;
+  return prev;
 }
 
-function moveDown() {
-  for (let c = 0; c < size; c++) {
-    let col = board.map(r => r[c]).reverse();
-    let after = slide(col).reverse();
-    for (let r = 0; r < size; r++) board[r][c] = after[r];
+function applyMove(dir) {
+  // snapshot old board
+  const oldBoard = board.map(r => [...r]);
+  const prev = Array(size).fill(null).map(() => Array(size).fill(null));
+
+  if (dir === "left") {
+    for (let r = 0; r < size; r++) {
+      const { row, origins, mergeIndices } = slide(oldBoard[r]);
+      board[r] = row;
+      origins.forEach((origC, newC) => {
+        if (origC !== null) prev[r][newC] = { r, c: origC };
+      });
+      mergeIndices.forEach(i => merges.push({ r, c: i }));
+    }
+  } else if (dir === "right") {
+    for (let r = 0; r < size; r++) {
+      const reversed = [...oldBoard[r]].reverse();
+      const { row, origins, mergeIndices } = slide(reversed);
+      board[r] = [...row].reverse();
+      origins.forEach((origC, newCRev) => {
+        if (origC !== null) {
+          const newC = size - 1 - newCRev;
+          const oldC = size - 1 - origC;
+          prev[r][newC] = { r, c: oldC };
+        }
+      });
+      mergeIndices.forEach(i => merges.push({ r, c: size - 1 - i }));
+    }
+  } else if (dir === "up") {
+    for (let c = 0; c < size; c++) {
+      const col = oldBoard.map(row => row[c]);
+      const { row: after, origins, mergeIndices } = slide(col);
+      origins.forEach((origR, newR) => {
+        if (origR !== null) prev[newR][c] = { r: origR, c };
+      });
+      mergeIndices.forEach(i => merges.push({ r: i, c }));
+      for (let r = 0; r < size; r++) board[r][c] = after[r];
+    }
+  } else if (dir === "down") {
+    for (let c = 0; c < size; c++) {
+      const col = oldBoard.map(row => row[c]).reverse();
+      const { row: after, origins, mergeIndices } = slide(col);
+      const afterFinal = [...after].reverse();
+      origins.forEach((origRRev, newRRev) => {
+        if (origRRev !== null) {
+          const newR = size - 1 - newRRev;
+          const oldR = size - 1 - origRRev;
+          prev[newR][c] = { r: oldR, c };
+        }
+      });
+      mergeIndices.forEach(i => merges.push({ r: size - 1 - i, c }));
+      for (let r = 0; r < size; r++) board[r][c] = afterFinal[r];
+    }
   }
-  return true;
+
+  // check if anything actually moved
+  const changed = oldBoard.some((row, r) => row.some((v, c) => v !== board[r][c]));
+  if (changed) prevPositions = prev;
+  return changed;
 }
 
 function canMove() {
-  for (let r = 0; r < size; r++) {
+  for (let r = 0; r < size; r++)
     for (let c = 0; c < size; c++) {
       if (board[r][c] === 0) return true;
-
       let v = board[r][c];
       if (r < size - 1 && board[r+1][c] === v) return true;
       if (c < size - 1 && board[r][c+1] === v) return true;
     }
-  }
   return false;
 }
 
@@ -298,24 +475,28 @@ function gameOver() {
   document.getElementById("finalScore").textContent = "Score: " + score;
 }
 
-const keyMap = {
-  ArrowLeft: moveLeft, a: moveLeft,
-  ArrowRight: moveRight, d: moveRight,
-  ArrowUp: moveUp, w: moveUp,
-  ArrowDown: moveDown, s: moveDown,
+const dirMap = {
+  ArrowLeft: "left",  a: "left",
+  ArrowRight: "right", d: "right",
+  ArrowUp: "up",    w: "up",
+  ArrowDown: "down",  s: "down",
 };
 
 document.addEventListener("keydown", e => {
-  const move = keyMap[e.key];
-  if (!move) return;
+  if (inputLocked) return;
+  const dir = dirMap[e.key];
+  if (!dir) return;
 
-  const moved = move();
+  const moved = applyMove(dir);
+  if (!moved) return;
 
-  if (moved) {
-    addTile();
-    draw();
-    if (!canMove()) gameOver();
-  }
+  inputLocked = true;
+  addTile();
+  draw(true);
+  checkWin();
+  if (!canMove()) gameOver();
+
+  setTimeout(() => { inputLocked = false; }, 120);
 });
 
 function restart() {

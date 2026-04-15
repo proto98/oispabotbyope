@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Classroom</title>
+<title>2048 Game</title>
 
 <style>
 body {
   font-family: Arial;
   text-align: center;
-  background: #faf8ef;
+  background: url(background.jpg) center/cover no-repeat fixed;
 }
 
 #score {
@@ -155,9 +155,9 @@ button {
 
 <body>
 
-<h1>Oispa Botby Lärare</h1>
+<h1>oispa botby lärare</h1>
 
-<div id="score">Gul Wilma: 0<br>High Score: 0</div>
+<div id="score">gul wilma: 0<br>High Score: 0</div>
 
 <button id="rebirthBtn" onclick="rebirth()" disabled>
   GÅ TILL PRISMA
@@ -283,7 +283,7 @@ function draw(animate = true) {
   }
 
   document.getElementById("score").innerHTML =
-    "Gul Wilma: " + score + "<br>High Score: " + highScore;
+    "gul wilma: " + score + "<br>High Score: " + highScore;
 
   updateRebirthButton();
 
